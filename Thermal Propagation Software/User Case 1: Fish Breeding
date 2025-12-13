@@ -18,7 +18,7 @@ def defining_constants():
     dt = 0.001 #delta t of simulation
     T_final = 50 #total time simulated
     steps_per_frame = 10 #steps in frame 
-    x = np.linspace(-Lx/2, Lx/2, nx) #creates a x space from -a/2 to a/2 with the resolution of grid
+    x = np.linspace(-Lx/2, Lx/2, nx) ##creates a x space from -a/2 to a/2 with the resolution of grid
     y = np.linspace(-Ly/2, Ly/2, ny) #creates a y space from -a/2 to a/2 with the resolution of grid
     X, Y = np.meshgrid(x, y) #return X where each row is a copy of x and y where each column is a copy of y 
     points = np.column_stack((X.ravel(), Y.ravel())) #all sets of x,y points 
