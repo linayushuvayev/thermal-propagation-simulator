@@ -1,0 +1,430 @@
+import numpy as np
+import plotly.graph_objects as go
+from matplotlib.path import Path
+import time
+import matplotlib.pyplot as plt
+import matplotlib.patches as mpatches
+from matplotlib.widgets import Slider, Button
+
+sample_rate = 5
+
+def defining_constants():
+    '''
+    function is just to remove space
+    '''
+    Lx, Ly = 3.0, 3.0 #lenght of square box 
+    nx, ny = 501, 501  #resolution - the higher the more there are square boxes in the mesh
+    dx, dy = Lx/(nx-1), Ly/(ny-1) #for 101 we would have dx = 0.01
+    alpha = 0.0005  #thermal diffusivity constant
+    dt = 0.001 #delta t of simulation
+    T_final = 50 #total time simulated
+    steps_per_frame = 10 #steps in frame 
+    x = np.linspace(-Lx/2, Lx/2, nx) #creates a x space from -a/2 to a/2 with the resolution of grid
+    y = np.linspace(-Ly/2, Ly/2, ny) #creates a y space from -a/2 to a/2 with the resolution of grid
+    X, Y = np.meshgrid(x, y) #return X where each row is a copy of x and y where each column is a copy of y 
+    points = np.column_stack((X.ravel(), Y.ravel())) #all sets of x,y points 
+    return Lx, Ly, nx, ny, dx, dy, dt, T_final, steps_per_frame, x, y, X, Y, points
+
+def regular_polygon(k, r):
+    '''
+    creates a new set of points in the shapes that you want it:
+    k - [int]: number of sides you want it to have
+    r - [int]: radius of said shape    
+    returns: np.array([x1,y1],[x2,y2],..,[xn,yn]) for all vertices on the shape
+    '''
+    theta = np.linspace(0, 2*np.pi, k, endpoint=False)
+    x = r * np.cos(theta) #np.array([x1, x2, x3])
+    y = r * np.sin(theta) #np.array([x1, x2, x3])
+    return np.column_stack((x, y)) #np.array([x1,y1],[x2,y2],[x3,y3])
+
+def calculate_laplacian(T_array):
+    '''
+    calculates the laplaciants of the array of points
+    T_array - np.array: array containing all the temperatures 
+    '''
+    L = np.zeros_like(T_array)
+    L[1:-1, 1:-1] = (
+        (T_array[2:, 1:-1] + T_array[:-2, 1:-1] + T_array[1:-1, 2:] + T_array[1:-1, :-2] - 4*T_array[1:-1, 1:-1]) / (dx**2)
+    )
+    L[~mask] = 0
+    return L
+
+def apply_boundary_conditions(T_array):
+    '''
+    checks for conditions if in polygon and gives back 0
+    T_in - np.array: array  
+    the [mask] is all points in the mask so ~ all points not in the mask --> returns to 0.
+    '''
+    T_array[~mask] = 0.0 
+    return T_array
+
+def ploting_shape_and_getting_charges(path):
+    '''
+    gets desired points & tempetaure
+    input - array: path list
+    output - arrays: initial conditions
+    '''
+    patch = mpatches.PathPatch(path, facecolor='none', lw=2)
+    
+    fig, ax = plt.subplots(figsize=(8, 8)) 
+    
+    ax.add_patch(patch)
+    ax.set_xlim(-Lx, Lx)
+    ax.set_ylim(-Ly, Ly)
+    
+    ax.set_aspect('equal') 
+
+    plt.subplots_adjust(bottom=0.4)
+
+    static_slider_ax = plt.axes([0.3, 0.30, 0.4, 0.05])
+    static_temp_slider = Slider(
+        ax=static_slider_ax,
+        label='Static Temperature',
+        valmin=-100,
+        valmax=100,
+        valinit=0
+    )
+
+    dynamic_slider_ax = plt.axes([0.3, 0.20, 0.4, 0.05])
+    dynamic_temp_slider = Slider(
+        ax=dynamic_slider_ax,
+        label='Oscillating Temperature',
+        valmin=-100,
+        valmax=100,
+        valinit=0
+    )
+
+    osci_slider_ax = plt.axes([0.3, 0.10, 0.4, 0.05])
+    osci_freq_slider = Slider(
+        ax=osci_slider_ax,
+        label='Oscillating Frequency',
+        valmin=0,
+        valmax=2,
+        valinit=0
+    )
+    
+    button_ax = plt.axes([0.4, 0.02, 0.2, 0.05]) # [left, bottom, width, height]
+    submit_button = Button(button_ax, 'Submit')
+    
+    rows_static = []
+    cols_static = []
+    rows_osci = []
+    cols_osci = []
+    
+    static_temp = [0]
+    dynamic_temp = [0]
+    osci_freq = [0]
+    is_submitted = [False] 
+
+
+    def on_slide_stat_temp(val):
+        static_temp[0] = val
+        fig.canvas.draw_idle()  
+    
+    def on_slide_osci_temp(val):
+        dynamic_temp[0] = val
+        fig.canvas.draw_idle()  
+
+    def on_slide_freq(val):
+        osci_freq[0] = val
+        fig.canvas.draw_idle()  
+        
+    def onclick(event):
+            if event.inaxes != ax:
+                return 
+            
+            x_event, y_event = event.xdata, event.ydata
+
+            ix = np.argmin(np.abs(x - x_event)) 
+            iy = np.argmin(np.abs(y - y_event))
+
+            snapped_ix = (ix // sample_rate) * sample_rate
+            snapped_iy = (iy // sample_rate) * sample_rate
+            
+            x_snapped_coord = x[snapped_ix]
+            y_snapped_coord = y[snapped_iy]
+
+            if event.button == 1: 
+                rows_static.append(snapped_ix)
+                cols_static.append(snapped_iy)
+                ax.plot(x_snapped_coord, y_snapped_coord, 'ro', label='Static Source')
+
+            elif event.button == 3: 
+                rows_osci.append(snapped_ix)
+                cols_osci.append(snapped_iy)          
+                ax.plot(x_snapped_coord, y_snapped_coord, 'bo', label='Oscillating Source')
+
+            plt.draw()
+
+    def on_submit(event):
+        is_submitted[0] = True 
+        plt.close(fig) 
+    
+    cid = fig.canvas.mpl_connect('button_press_event', onclick)
+    static_temp_slider.on_changed(on_slide_stat_temp)
+    dynamic_temp_slider.on_changed(on_slide_osci_temp)
+    osci_freq_slider.on_changed(on_slide_freq)
+    submit_button.on_clicked(on_submit)
+
+    plt.show()
+
+    return cols_static, rows_static, cols_osci, rows_osci, static_temp[0], dynamic_temp[0], osci_freq[0], is_submitted[0] 
+
+material_alpha_information = {
+    "copper": 1.12*10e-4,
+    "alimunium": 80*10e-6,
+    "FR-4":0.14*10e-6,
+}
+
+try:
+    k_sides_shape = int(input('Number of sides (e.g., 6 for a hexagon): '))
+    print('Please now select the PC material. Here is our selection:')
+    print("- copper - alimunium - FR-4 -")
+    material_alpha = str(input('input the material you want to simulate: '))
+    alpha = material_alpha_information.get(material_alpha)
+    print('Great, now input your heat sources. Left click for static and right click for oscillating.')
+except ValueError:
+    print("Invalid input. Using defaults settings.")
+    k_sides_shape = 4
+    alpha = 1.12*10e-4
+
+Lx, Ly, nx, ny, dx, dy, dt, T_final, steps_per_frame, x, y, X, Y, points = defining_constants()
+polygon_radius=1
+vertices = regular_polygon(k_sides_shape, polygon_radius)
+vertices = np.vstack([vertices, vertices[0]]) #vstack is opposite of column stack in that it returns np.array([x1,x2],[new list])
+polygon_path = Path(vertices) #creates a path in the vertices (0,0) → (1,0) → (1,1) → (0,1) → (0,0)
+mask = polygon_path.contains_points(points).reshape((ny, nx)) #check if the points are in the path -> Bollean value 
+cols_static, rows_static, cols_dynamic,rows_dynamic, tempature_static, tempetarure_dynamic, osci, submitted = ploting_shape_and_getting_charges(polygon_path)
+
+if submitted == True:
+    T = np.zeros((ny, nx))
+    T[~mask] = 0.0
+    start_time = time.time()
+    T_frames = []       
+    time_stamps = []    
+    T_current = T.copy()
+    total_sim_time = 0.0 
+
+    total_original_frames = int(T_final / (dt * steps_per_frame))
+    save_frame_interval = 10 
+    num_plotly_frames = total_original_frames // save_frame_interval
+    plot_subsample_rate = sample_rate
+    omega = 2 * np.pi * osci
+
+    print('')
+    print('_'*20)
+    print('')
+    print("Pre-calculating simulation frames...")
+    print('')
+    print('_'*20)
+    print('')
+
+    for frame_num in range(total_original_frames):
+        
+        for _ in range(steps_per_frame):
+            L = calculate_laplacian(T_current)
+            T_new = T_current + alpha * dt * L
+            current_source_temp = tempetarure_dynamic * np.sin(omega * total_sim_time) #Asin(wt) 
+            if len(cols_static) > 0:
+                T_new[cols_static,rows_static] = tempature_static        
+            if len(cols_dynamic) > 0:
+                T_new[cols_dynamic,rows_dynamic] = current_source_temp
+            T_new = apply_boundary_conditions(T_new)
+            T_current = T_new
+            total_sim_time += dt
+        
+        current_time_label = frame_num * dt * steps_per_frame
+        
+        if frame_num % save_frame_interval == 0:
+            T_frames.append(T_current.copy())
+            time_stamps.append(f"{current_time_label:.3f}s")
+
+    end_time = time.time()
+    print(f"...Calculation complete in {end_time - start_time:.2f} seconds.")
+
+     
+    #T_frames is constructed as list of N_time lenght which matrix at each element containing all temperature elements in with dimensions nx,ny 
+    Data_Matrix = np.array([T.ravel() for T in T_frames]).T #flattens the 2D matrix into 1D matrix, #transpose to inverse so that each column is time and each row is element in matrix  
+
+    average_temperature = np.mean(Data_Matrix, axis=1) 
+    temperature_approximated_steady_centered = Data_Matrix - average_temperature[:, np.newaxis] #Mean centering
+    U, s, Vh = np.linalg.svd(temperature_approximated_steady_centered, full_matrices=False) 
+    #simplify the main matrix into Left singular, sinugarl, right singular - left is spatial patterns
+
+    T_steady_2D = average_temperature.reshape((ny, nx)) #reshape into matrix
+    T_steady_plot = T_steady_2D[::plot_subsample_rate, ::plot_subsample_rate] #plot it 
+    T_oscillation_mode_2D = U[:, 0].reshape((ny, nx)) #reshape 
+    T_oscillation_plot = (T_oscillation_mode_2D * s[0])[::plot_subsample_rate, ::plot_subsample_rate] #plot
+
+    X_plot = X[::plot_subsample_rate, ::plot_subsample_rate]
+    Y_plot = Y[::plot_subsample_rate, ::plot_subsample_rate]
+    T_plot_initial = T_frames[0][::plot_subsample_rate, ::plot_subsample_rate]
+
+    my_custom_hot = [
+        [0.0,   'rgb(0, 0, 255)'],       # Dark Blue (for most negative)
+        [0.25,  'rgb(173, 216, 230)'],    # Light Blue
+        [0.499, 'rgba(0, 0, 0, 0.0)'],    # Transparent (for 0)
+        [0.525, 'rgb(255, 204, 204)'],    # Light Red
+        [0.75,  'rgb(255, 102, 102)'],    # Red
+        [1.0,   'rgb(255, 0, 0)']         # Dark Red (for most positive)
+    ]
+
+    max_temperature = max(np.max(tempature_static), np.max(tempetarure_dynamic))
+    max_dynamic_temp = np.max(np.abs(T_oscillation_plot))
+    min_temperature = -max_temperature
+
+
+    steady_surface = go.Surface(
+        x=X_plot, y=Y_plot, z=T_steady_plot,
+        colorscale=my_custom_hot, cmin=min_temperature, cmax=max_temperature,
+        colorbar=dict(title='Temperature (Steady)'), name='Steady State (Mean)',
+        visible=False 
+    )
+    
+    osc_surface = go.Surface(
+        x=X_plot, y=Y_plot, z=T_oscillation_plot,
+        colorscale='balance', cmin=-max_dynamic_temp, cmax=max_dynamic_temp,
+        colorbar=dict(title='Oscillation Amplitude'), name='Principal Oscillation Mode',
+        visible=False
+    )
+    fig = go.Figure(data=[
+        go.Surface(
+            x=X_plot, y=Y_plot, z=T_plot_initial,
+            colorscale=my_custom_hot, cmin=min_temperature, cmax=max_temperature,
+            colorbar=dict(title='Temperature (Anim)'), name='Animation',
+            visible=True
+        ),
+        steady_surface, 
+        osc_surface,
+        go.Scatter3d(
+            x=vertices[:, 0],
+            y=vertices[:, 1],
+            z=[0] * len(vertices),
+            mode='lines',
+            line=dict(color='blue', width=4),
+            name='Polygon Boundary',
+            visible=True
+        )
+    ])
+
+    plotly_frames = []
+    for i, T_data in enumerate(T_frames):
+        T_plot_frame = T_data[::plot_subsample_rate, ::plot_subsample_rate]
+        frame = go.Frame(
+            data=[
+                go.Surface(z=T_plot_frame, x=X_plot, y=Y_plot, visible=True),
+                go.Surface(z=T_steady_plot, x=X_plot, y=Y_plot, visible=False),
+                go.Surface(z=T_oscillation_plot, x=X_plot, y=Y_plot, visible=False)
+                ],
+            name=time_stamps[i]
+            )
+        plotly_frames.append(frame)
+            
+    fig.frames = plotly_frames
+
+    def get_slider_steps(time_stamps):
+        steps = []
+        for i, t in enumerate(time_stamps):
+            step = dict(
+                method='animate',
+                args=[[t], dict(mode='immediate', 
+                            frame=dict(duration=50, redraw=True), 
+                            transition=dict(duration=0))],
+                label=t
+            )
+            steps.append(step)
+        return steps
+
+    sliders = [dict(
+        active=0,
+        currentvalue=dict(prefix='Time: ', visible=True),
+        pad=dict(t=50),
+        steps=get_slider_steps(time_stamps)
+    )]
+
+    play_button = [dict(
+        type='buttons',
+        showactive=False,
+        x=0.05, y=0,
+        buttons=[dict(
+            label='Play',
+            method='animate',
+            args=[None, dict(frame=dict(duration=50, redraw=True),
+                            fromcurrent=True, 
+                            transition=dict(duration=0, easing='linear'))]
+        ),
+        dict(
+            label='Pause',
+            method='animate',
+            args=[[None], dict(mode='immediate')]
+        )]
+    )]
+
+
+    svd_buttons = [
+        dict(
+            label='Show Animation',
+            method='animate', 
+            args=[
+                [time_stamps[0]], 
+                dict(
+                    mode='immediate',
+                    frame=dict(duration=50, redraw=True),
+                    transition=dict(duration=0),
+                    data=[
+                        {'visible': True, 'z': T_frames[0][::plot_subsample_rate, ::plot_subsample_rate]}, 
+                        {'visible': False}, 
+                        {'visible': False},
+                        {'visible': True}
+                    ]
+                )
+            ], 
+        ),
+        dict(
+            label='Show Steady State (Mean)',
+            method='update',
+            args=[
+                {'visible': [False, True, False, True]}, 
+                {'title': f'SVD Steady State (Mean) Plot ({k_sides_shape}-gon)'}
+            ]
+        ),
+        dict(
+            label='Principal Fluctuation Mode',
+            method='update',
+            args=[
+                {'visible': [False, False, True, True]}, 
+                {
+                    'title': f'SVD Principal Oscillation Pattern ({k_sides_shape}-gon)',
+                    'scene.zaxis.range': [-max_dynamic_temp * 1.5, max_dynamic_temp * 1.5]
+                }
+            ]
+        )
+    ]
+
+    fig.update_layout(
+        title=f'3D Heat Diffusion with SVD Analysis ({k_sides_shape}-gon)',
+        scene=dict(
+            xaxis_title='X Coordinate',
+            yaxis_title='Y Coordinate',
+            zaxis_title='Temperature',
+            zaxis=dict(range=[min_temperature, max_temperature]),
+            aspectratio=dict(x=1, y=1, z=0.3) 
+        ),
+        updatemenus=[
+            play_button[0], 
+            dict( 
+                type='buttons',
+                showactive=True,
+                x=0.05, y=0.15, 
+                buttons=svd_buttons,
+                direction='right',
+                xanchor='left',
+                yanchor='top'
+            )
+        ],
+        sliders=sliders
+    )
+
+    print("Displaying interactive 3D plot... (This may open in your web browser)")
+    print("If modes dont show peaks it means a bug appeared, please re-run simulation. Or click first on modes then play simulation.")
+    fig.show()
